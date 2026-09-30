@@ -9,9 +9,15 @@
     "start": "next start",
     "lint": "eslint",
     "db:ping": "tsx --env-file=.env.local scripts/db-ping.ts",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "db:reset": "tsx --env-file=.env.local scripts/db-reset.ts",
+    "try-tools": "tsx --env-file=.env.local scripts/try-tools.ts",
+    "test": "tsx --env-file=.env.local --test --test-concurrency=1 tests/*.test.ts",
+    "scenario": "tsx --env-file=.env.local scripts/run-scenario.ts",
+    "incident": "tsx --env-file=.env.local scripts/incident.ts"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^4.0.82",
     "@ai-sdk/xai": "^5.0.13",
     "ai": "^7.0.123",
     "next": "16.3.7",
