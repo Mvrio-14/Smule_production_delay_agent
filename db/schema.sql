@@ -1,0 +1,1 @@
+-- Schema for the simulated world. Filled in build step 1.
