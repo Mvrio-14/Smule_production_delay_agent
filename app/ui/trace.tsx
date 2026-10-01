@@ -92,7 +92,7 @@ export function Trace({ state }: { state: IncidentState }) {
         <div className="min-w-0 flex-1 text-sm">
           <p className="font-medium text-amber-950">Production tracking alert</p>
           <p className="mt-0.5 text-amber-900/80">
-            {trigger_event.job_started ? (
+            {trigger_event.job_started !== false ? (
               <>
                 Order {trigger_event.order_id} has been {STAGE_LABELS[trigger_event.stage] ?? trigger_event.stage} for{" "}
                 <span className="font-medium text-amber-950">{duration(trigger_event.planned_stage_minutes + trigger_event.overdue_minutes)}</span> instead of
@@ -147,7 +147,7 @@ function AgentTurn({ state, block }: { state: IncidentState; block: Extract<Bloc
   return (
     <Row avatar={<AgentOrb />}>
       <div className="flex items-baseline gap-2">
-        <span className="text-sm font-semibold text-zinc-900">Delay Agent</span>
+        <span className="text-sm font-semibold text-zinc-900">Late Order Coordinator</span>
         {m && (
           <span className="text-[11px] text-zinc-400">
             {(m.duration_ms / 1000).toFixed(1)}s · {((m.tokens_in ?? 0) + (m.tokens_out ?? 0)).toLocaleString()} tokens
@@ -277,8 +277,7 @@ function toolSummary(step: Step): string {
       return `to ${String(output.sent_to).replace(/ \(.*\)$/, "")}`;
     case "reschedule_machine":
     case "reschedule_orders": {
-      const hours = Number(input.delay_minutes) / 60;
-      return `${hours % 1 === 0 ? hours : hours.toFixed(1)} h · ${output.on_time} on time, ${output.late_recoverable} recoverable, ${output.late} late`;
+      return `${duration(Number(input.delay_minutes))} delay · ${output.on_time} on time, ${output.late_recoverable} recoverable, ${output.late} late`;
     }
     case "upgrade_shipping":
       return `${output.order_id} via ${METHOD_LABELS[String(output.shipping_method)]}, arrives ${niceDate(String(output.new_delivery_date))}`;

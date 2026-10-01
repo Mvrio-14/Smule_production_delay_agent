@@ -6,7 +6,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Production Delay Agent",
+  title: "Late Order Coordinator",
   description: "Internal agent demo for Sticker Mule: production delays from the factory floor to support.",
 };
 

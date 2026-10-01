@@ -147,7 +147,7 @@ export function StaffChat({ state, staffId, onChange }: { state: IncidentState; 
     >
       {messages.length === 0 && <Empty>No message yet.</Empty>}
       {messages.map((m) => (
-        <Bubble key={m.id} mine={m.sender !== "agent"} author={m.sender === "agent" ? "Delay Agent" : `You, ${firstName}`} time={hhmm(m.sim_time)}>
+        <Bubble key={m.id} mine={m.sender !== "agent"} author={m.sender === "agent" ? "Late Order Coordinator" : `You, ${firstName}`} time={hhmm(m.sim_time)}>
           {m.body}
         </Bubble>
       ))}
@@ -236,7 +236,7 @@ function SummaryCard({ body, time, children }: { body: string; time: string; chi
       <div className="px-4 pb-3 pt-3.5">
         <div className="mb-2 flex items-center gap-2 text-[11px] text-zinc-400">
           <AgentOrb size="sm" />
-          <span className="font-medium text-zinc-600">Delay Agent</span>
+          <span className="font-medium text-zinc-600">Late Order Coordinator</span>
           <span>· {time}</span>
         </div>
         <p className="flex items-start gap-2 text-[15px] font-semibold leading-snug text-zinc-900">

@@ -1,4 +1,4 @@
-# Project brief: Production Delay Agent (Sticker Mule demo)
+# Project brief: Late Order Coordinator (Sticker Mule demo)
 
 ## Why this project exists
 

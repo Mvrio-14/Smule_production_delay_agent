@@ -1,7 +1,6 @@
 "use client";
 // Test scenarios: the scripted cases and their last run (written by npm run evals). Read only.
-import { useEffect, useState } from "react";
-import { CheckCircle2, CircleDashed, Headset, ShieldAlert, UserRound, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, CircleDashed, Headset, ShieldAlert, UserRound, XCircle } from "lucide-react";
 import { Trace } from "@/app/ui/trace";
 import type { EvalCaseView } from "@/app/ui/types";
 import { SCENARIOS, type ScenarioId } from "@/lib/scenarios";
@@ -28,56 +27,50 @@ function Result({ c }: { c: EvalCaseView }) {
   );
 }
 
-export function Scenarios() {
-  const [cases, setCases] = useState<EvalCaseView[] | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/evals")
-      .then((r) => r.json())
-      .then((list: EvalCaseView[]) => {
-        setCases(list);
-        setSelected(list[0]?.case_id ?? null);
-      });
-  }, []);
-
-  if (!cases) return <p className="p-10 text-sm text-zinc-500">Loading…</p>;
-  const current = cases.find((c) => c.case_id === selected);
-  const passedCases = cases.filter((c) => c.run && c.run.checks.every((x) => x.passed)).length;
-
+// The sidebar of the test scenarios view: replaces the main sidebar, with a way back.
+export function ScenarioSidebar({ cases, selected, onSelect, onBack }: {
+  cases: EvalCaseView[] | null;
+  selected: string | null;
+  onSelect: (caseId: string) => void;
+  onBack: () => void;
+}) {
+  const passedCases = (cases ?? []).filter((c) => c.run && c.run.checks.every((x) => x.passed)).length;
   return (
-    <div className="flex h-full">
-      <div className="w-80 shrink-0 overflow-y-auto border-r border-zinc-200 bg-white">
-        <div className="px-5 pb-3 pt-8">
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-900">Test scenarios</h1>
-          <p className="mt-1 text-xs text-zinc-500">
-            Scripted cases, each tied to a business risk. {passedCases}/{cases.length} passing on their last run. Run them with{" "}
-            <code className="rounded bg-zinc-100 px-1 font-mono">npm run evals</code>.
-          </p>
-        </div>
-        <div className="space-y-0.5 px-3 pb-6">
-          {cases.map((c) => (
-            <button
-              key={c.case_id}
-              onClick={() => setSelected(c.case_id)}
-              className={`flex w-full items-start gap-3 rounded-lg px-2.5 py-2.5 text-left transition ${c.case_id === selected ? "bg-zinc-100" : "hover:bg-zinc-50"}`}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-zinc-900">{TITLES[c.case_id] ?? c.case_id}</span>
-                <span className="block text-xs leading-snug text-zinc-500">{c.risk}</span>
-              </span>
-              <Result c={c} />
-            </button>
-          ))}
-        </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="px-3">
+        <button onClick={onBack} className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-900">
+          <ArrowLeft className="size-4" />
+          Back
+        </button>
       </div>
-
-      <div className="min-w-0 flex-1 overflow-y-auto">{current && <CaseDetail c={current} />}</div>
+      <div className="px-5 pb-3 pt-3">
+        <h1 className="text-base font-semibold tracking-tight text-zinc-900">Test scenarios</h1>
+        <p className="mt-1 text-xs text-zinc-500">
+          Scripted cases, each tied to a business risk.{cases && ` ${passedCases}/${cases.length} passing on their last run.`} Run them with{" "}
+          <code className="rounded bg-zinc-100 px-1 font-mono">npm run evals</code>.
+        </p>
+      </div>
+      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-6">
+        {!cases && <p className="px-2 text-sm text-zinc-400">Loading…</p>}
+        {cases?.map((c) => (
+          <button
+            key={c.case_id}
+            onClick={() => onSelect(c.case_id)}
+            className={`flex w-full items-start gap-3 rounded-lg px-2.5 py-2.5 text-left transition ${c.case_id === selected ? "bg-zinc-100" : "hover:bg-zinc-50"}`}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium text-zinc-900">{TITLES[c.case_id] ?? c.case_id}</span>
+              <span className="block text-xs leading-snug text-zinc-500">{c.risk}</span>
+            </span>
+            <Result c={c} />
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
 
-function CaseDetail({ c }: { c: EvalCaseView }) {
+export function CaseDetail({ c }: { c: EvalCaseView }) {
   return (
     <div className="max-w-4xl px-10 pb-24 pt-8">
       <div className="flex flex-wrap items-center gap-3">

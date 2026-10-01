@@ -6,9 +6,9 @@ import { Activity, Coins, FlaskConical, Gauge, Hand, LayoutDashboard, Moon, Sun,
 import { StaffChat, SupportChat } from "@/app/ui/chats";
 import { Dashboard } from "@/app/ui/dashboard";
 import { AgentOrb, BrandMark, Stat, StatusBadge, StatusDot } from "@/app/ui/parts";
-import { Scenarios } from "@/app/ui/scenarios";
+import { CaseDetail, ScenarioSidebar } from "@/app/ui/scenarios";
 import { Trace } from "@/app/ui/trace";
-import { STATUS_LABELS, simClock, type IncidentState, type IncidentSummary } from "@/app/ui/types";
+import { STATUS_LABELS, simClock, type EvalCaseView, type IncidentState, type IncidentSummary } from "@/app/ui/types";
 import { SCENARIOS, type ScenarioId } from "@/lib/scenarios";
 
 const SCENARIO_UI: Record<ScenarioId, { icon: LucideIcon; when: string }> = {
@@ -38,6 +38,19 @@ export function App() {
   const [state, setState] = useState<IncidentState | null>(null);
   const [starting, setStarting] = useState<ScenarioId | null>(null);
   const [view, setView] = useState<"incidents" | "dashboard" | "scenarios">("incidents");
+  const [cases, setCases] = useState<EvalCaseView[] | null>(null);
+  const [selectedCase, setSelectedCase] = useState<string | null>(null);
+
+  // Load the test scenarios (their last run) each time the view opens.
+  useEffect(() => {
+    if (view !== "scenarios") return;
+    fetch("/api/evals")
+      .then((r) => r.json())
+      .then((list: EvalCaseView[]) => {
+        setCases(list);
+        setSelectedCase((current) => current ?? list[0]?.case_id ?? null);
+      });
+  }, [view]);
 
   const loadState = useCallback(() => {
     if (selected !== null) fetchState(selected).then((s) => s && setState(s));
@@ -102,11 +115,15 @@ export function App() {
         <div className="flex items-center gap-3 px-5 py-5">
           <BrandMark />
           <div>
-            <p className="text-sm font-semibold text-zinc-900">Production Delay Agent</p>
+            <p className="text-sm font-semibold text-zinc-900">Late Order Coordinator</p>
             <p className="text-xs text-zinc-500">Sticker Mule · internal tool demo</p>
           </div>
         </div>
 
+        {view === "scenarios" ? (
+          <ScenarioSidebar cases={cases} selected={selectedCase} onSelect={setSelectedCase} onBack={() => setView("incidents")} />
+        ) : (
+          <>
         <nav className="mb-5 space-y-0.5 px-3">
           {(
             [
@@ -181,6 +198,8 @@ export function App() {
             })}
           </div>
         </div>
+          </>
+        )}
 
         <div className="border-t border-zinc-200 px-5 py-3 text-xs text-zinc-500">
           Model <span className="font-mono text-zinc-700">{current?.incident.model ?? incidents[0]?.model ?? "—"}</span>
@@ -198,7 +217,10 @@ export function App() {
             }}
           />
         ) : view === "scenarios" ? (
-          <Scenarios />
+          (() => {
+            const c = cases?.find((x) => x.case_id === selectedCase);
+            return c ? <CaseDetail c={c} /> : <p className="p-10 text-sm text-zinc-500">Loading…</p>;
+          })()
         ) : selected === null ? (
           <div className="flex h-full items-center justify-center p-10">
             <div className="max-w-md text-center">
