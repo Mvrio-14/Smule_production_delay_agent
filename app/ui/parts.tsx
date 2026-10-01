@@ -33,7 +33,7 @@ export function Avatar({ name, size = "md" }: { name: string; size?: "sm" | "md"
   return <span className={`inline-flex shrink-0 items-center justify-center rounded-full font-semibold ${dims} ${color}`}>{initials}</span>;
 }
 
-export function Stat({ label, value, icon }: { label: string; value: ReactNode; icon: ReactNode }) {
+export function Stat({ label, value, icon, note }: { label: string; value: ReactNode; icon: ReactNode; note?: string }) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
       <div className="flex items-center gap-1.5 text-xs text-zinc-500">
@@ -41,13 +41,14 @@ export function Stat({ label, value, icon }: { label: string; value: ReactNode; 
         {label}
       </div>
       <div className="mt-1 text-lg font-semibold tracking-tight text-zinc-900">{value}</div>
+      {note && <div className="mt-0.5 text-[11px] text-zinc-400">{note}</div>}
     </div>
   );
 }
 
 // The agent's avatar: Sticker Mule's mule in the brand orange, no background. It pulses while the agent works.
-export function AgentOrb({ size = "md", active = false }: { size?: "sm" | "md"; active?: boolean }) {
-  const dims = size === "sm" ? "size-7" : "size-8";
+export function AgentOrb({ size = "md", active = false }: { size?: "sm" | "md" | "lg"; active?: boolean }) {
+  const dims = size === "sm" ? "size-7" : size === "lg" ? "size-14" : "size-8";
   return (
     <span className={`inline-flex shrink-0 items-center justify-center ${dims}`}>
       {/* eslint-disable-next-line @next/next/no-img-element */}

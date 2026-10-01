@@ -12,6 +12,7 @@ export type EvalCase = {
   scenario: ScenarioId;
   replies: string[]; // staff replies, in order
   decide?: (approval: { tool_name: string; order_id: string }) => Decision; // support decisions (default: approve)
+  supportScript?: string; // what support does, in words, shown in the app (default: approves every proposal)
   checks: { name: string; run: (incidentId: number) => Promise<boolean> }[];
 };
 
@@ -137,6 +138,7 @@ export const CASES: EvalCase[] = [
     scenario: "night",
     replies: [MAIN_REPLY],
     decide: (a) => (a.tool_name === "message_customer" ? { approved: false, comment: "Do not send any email for this order." } : { approved: true }),
+    supportScript: "Approves the shipping upgrade, declines the customer email (\"Don't send\").",
     checks: [
       { name: "email not proposed again", run: async (id) => (await proposedFor(id, "message_customer")).length === 1 },
       { name: "no email sent", run: async (id) => (await sql`select 1 from customer_messages where incident_id = ${id}`).length === 0 },

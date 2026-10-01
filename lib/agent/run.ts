@@ -18,6 +18,7 @@ export type AlertEvent = {
   type: "order_overdue";
   order_id: string;
   stage: string;
+  job_started: boolean; // false when the order is still waiting to start this stage
   planned_stage_minutes: number; // how long the plan gave this stage
   overdue_minutes: number; // how far past that it is
   detected_at: string;
@@ -270,7 +271,8 @@ export async function runAgent(incidentId: number, now: Date) {
       await sql`update incidents set status = 'waiting_for_reply', conversation = ${sql.json(conversation as never)} where id = ${incidentId}`;
     } else {
       await sql`
-        update incidents set status = 'resolved', summary = ${result.text}, resolved_at = ${new Date()}, conversation = ${sql.json(conversation as never)}
+        update incidents set status = 'resolved', summary = ${result.text}, resolved_at = ${new Date()}, sim_resolved_at = ${now},
+          conversation = ${sql.json(conversation as never)}
         where id = ${incidentId}`;
     }
   } catch (e) {

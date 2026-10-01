@@ -6,6 +6,24 @@ import { resetDatabase } from "@/db/seed";
 import { decideApproval, replyToIncident, startIncident } from "@/lib/agent/run";
 import { SCENARIOS } from "@/lib/scenarios";
 import { CASES } from "@/evals/cases";
+import { loadIncidentState } from "@/lib/incident-state";
+import { modelSpec } from "@/lib/agent/model";
+
+// Results go to the app's schema (public), so the app can show the last run of each case.
+// The agent itself runs in the "test" schema.
+await sql`
+  create table if not exists public.eval_runs (
+    id        serial primary key,
+    case_id   text not null,
+    risk      text not null,
+    scenario  text not null,
+    checks    jsonb not null,  -- [{ name, passed }]
+    script    jsonb not null,  -- { replies, support }
+    snapshot  jsonb,           -- the incident as the app shows it
+    cost_usd  double precision,
+    model     text not null,
+    ran_at    timestamptz not null default now()
+  )`;
 
 const only = process.argv[2];
 const cases = only ? CASES.filter((c) => c.id === only) : CASES;
@@ -41,9 +59,20 @@ for (const c of cases) {
 
   const passed: string[] = [];
   const failed: string[] = [];
-  for (const check of c.checks) ((await check.run(id).catch(() => false)) ? passed : failed).push(check.name);
+  const checks: { name: string; passed: boolean }[] = [];
+  for (const check of c.checks) {
+    const ok = await check.run(id).catch(() => false);
+    (ok ? passed : failed).push(check.name);
+    checks.push({ name: check.name, passed: ok });
+  }
   const [{ cost }] = await sql`select coalesce(sum(cost_usd), 0) as cost from agent_steps where incident_id = ${id}`;
   console.log(failed.length === 0 ? "PASS" : `FAIL (${failed.join("; ")})`);
+  const snapshot = id ? await loadIncidentState(id) : null;
+  await sql`
+    insert into public.eval_runs (case_id, risk, scenario, checks, script, snapshot, cost_usd, model)
+    values (${c.id}, ${c.risk}, ${c.scenario}, ${sql.json(checks)},
+            ${sql.json({ replies: c.replies, support: c.supportScript ?? "Approves every proposal." })},
+            ${snapshot ? sql.json(JSON.parse(JSON.stringify(snapshot))) : null}, ${Number(cost)}, ${modelSpec()})`;
   results.push({ case: c.id, passed: `${passed.length}/${c.checks.length}`, failed: failed.join("; "), cost: `$${Number(cost).toFixed(3)}` });
 }
 

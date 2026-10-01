@@ -44,7 +44,7 @@ export type IncidentState = {
     status: Status;
     model: string;
     summary: string | null;
-    trigger_event: { detected_at: string; order_id: string; stage: string; planned_stage_minutes: number; overdue_minutes: number };
+    trigger_event: { detected_at: string; order_id: string; stage: string; job_started: boolean; planned_stage_minutes: number; overdue_minutes: number };
     created_at: string;
   };
   steps: Step[];
@@ -83,3 +83,53 @@ export function hhmm(time: string): string {
 export function niceDate(date: string): string {
   return new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`));
 }
+
+// GET /api/dashboard
+export type DashboardRow = {
+  id: number;
+  order_id: string;
+  cause: string | null; // as the agent entered it in the planning system
+  status: Status;
+  created_at: string;
+  duration_min: number | null;
+  messages: number;
+  tool_calls: number;
+  tool_errors: number;
+  human_touches: number;
+  late_orders: number | null;
+  affected_orders: number | null;
+  tokens: number;
+  cost: number;
+};
+
+export type DashboardData = {
+  kpis: {
+    handled: number;
+    successful: number;
+    failed: number;
+    warned_early: number;
+    upgrades: number;
+    upgrade_spend: number;
+    approval_rate: number | null;
+    decided: number;
+    avg_minutes_to_support: number | null;
+    avg_cost: number | null;
+    avg_tokens: number | null;
+  };
+  incidents: DashboardRow[];
+};
+
+// GET /api/evals
+export type EvalCaseView = {
+  case_id: string;
+  risk: string;
+  scenario: string;
+  run: {
+    checks: { name: string; passed: boolean }[];
+    script: { replies: string[]; support: string };
+    snapshot: IncidentState | null;
+    cost_usd: number;
+    model: string;
+    ran_at: string;
+  } | null;
+};

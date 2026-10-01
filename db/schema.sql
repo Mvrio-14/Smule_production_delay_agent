@@ -66,7 +66,8 @@ create table incidents (
   summary        text,                      -- the agent's final answer
   sim_started_at timestamptz not null,      -- simulated time of the alert (detected_at)
   created_at     timestamptz not null default now(),
-  resolved_at    timestamptz
+  resolved_at    timestamptz,
+  sim_resolved_at timestamptz               -- simulated time the incident closed (for durations)
 );
 
 -- Chat between the agent and staff (Slack in real life).

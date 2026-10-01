@@ -63,6 +63,7 @@ In the demo, a button sends it. In real life, a webhook from the tracking system
   "type": "order_overdue",
   "order_id": "SM-10401",
   "stage": "laminate",
+  "job_started": true,
   "planned_stage_minutes": 90,
   "overdue_minutes": 150,
   "detected_at": "2026-10-02T02:10:00-04:00"

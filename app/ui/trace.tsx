@@ -92,9 +92,20 @@ export function Trace({ state }: { state: IncidentState }) {
         <div className="min-w-0 flex-1 text-sm">
           <p className="font-medium text-amber-950">Production tracking alert</p>
           <p className="mt-0.5 text-amber-900/80">
-            Order {trigger_event.order_id} has been at the {STAGE_LABELS[trigger_event.stage] ?? trigger_event.stage} stage for{" "}
-            <span className="font-medium text-amber-950">{duration(trigger_event.planned_stage_minutes + trigger_event.overdue_minutes)}</span> instead of the{" "}
-            {duration(trigger_event.planned_stage_minutes)} planned. Nobody has said why or for how long.
+            {trigger_event.job_started ? (
+              <>
+                Order {trigger_event.order_id} has been {STAGE_LABELS[trigger_event.stage] ?? trigger_event.stage} for{" "}
+                <span className="font-medium text-amber-950">{duration(trigger_event.planned_stage_minutes + trigger_event.overdue_minutes)}</span> instead of
+                the {duration(trigger_event.planned_stage_minutes)} planned.
+              </>
+            ) : (
+              <>
+                Order {trigger_event.order_id} has been waiting{" "}
+                <span className="font-medium text-amber-950">{duration(trigger_event.planned_stage_minutes + trigger_event.overdue_minutes)}</span> to start{" "}
+                {STAGE_LABELS[trigger_event.stage] ?? trigger_event.stage} (the whole step was planned to take {duration(trigger_event.planned_stage_minutes)}).
+              </>
+            )}{" "}
+            Nobody has said why or for how long.
           </p>
         </div>
         <Time>{simClock(state, state.incident.created_at)}</Time>
