@@ -47,8 +47,10 @@ export const getOrderContext: Tool<typeof getOrderContextInput> = {
   description:
     "First call of every incident, for the order in the alert. " +
     "Returns: order (customer, product, shipping method, promised and estimated delivery dates), " +
-    "production (site, stage, machine, since when and for how many minutes it has been at this stage, number of orders on the same machine), " +
-    "supervisor_on_shift (null if nobody is on shift) and escalation_contact (the factory manager). " +
+    "production (site, stage, machine, since when and for how many minutes it has been at this stage), " +
+    "orders_on_same_machine (id, customer, product, promised delivery date), machines_at_site (every machine id at this factory, with its stage), " +
+    "supervisor_on_shift (null if nobody is on shift), buyer (purchasing, knows supplier deliveries, office hours) " +
+    "and escalation_contact (the factory manager). " +
     "Use site_id and machine_id from here when you reschedule, and the staff ids when you write to someone.",
   input: getOrderContextInput,
   run: async ({ order_id }, { now }) => {
@@ -58,16 +60,22 @@ export const getOrderContext: Tool<typeof getOrderContextInput> = {
       where o.id = ${order_id}`;
     if (!o) throw new Error(`Unknown order ${order_id}. Order ids look like 'SM-10401'.`);
 
-    const [{ count }] = await sql`
-      select count(*)::int as count from orders
-      where site_id = ${o.site_id} and machine_id = ${o.machine_id}`;
+    const machineOrders = await sql`
+      select id, customer_name, product, quantity, promised_delivery_date from orders
+      where site_id = ${o.site_id} and machine_id = ${o.machine_id}
+      order by id`;
     const [shift] = await sql`
       select sa.shift, sa.ends_at, st.id, st.name, st.chat_handle
       from shift_assignments sa join staff st on st.id = sa.supervisor_id
       where sa.site_id = ${o.site_id} and sa.starts_at <= ${now} and sa.ends_at > ${now}`;
+    const machines = await sql`
+      select distinct machine_id, stage from orders where site_id = ${o.site_id} order by machine_id`;
     const [manager] = await sql`
       select id, name, chat_handle from staff
       where site_id = ${o.site_id} and role = 'factory_manager'`;
+    const [buyer] = await sql`
+      select id, name, chat_handle from staff
+      where site_id = ${o.site_id} and role = 'buyer'`;
 
     return {
       now_local: localParts(now, o.timezone).label,
@@ -86,11 +94,18 @@ export const getOrderContext: Tool<typeof getOrderContextInput> = {
         machine_id: o.machine_id,
         at_stage_since_local: localParts(o.stage_started_at, o.timezone).label,
         minutes_at_stage: Math.round((now.getTime() - o.stage_started_at.getTime()) / 60_000),
-        orders_on_same_machine: count,
       },
+      orders_on_same_machine: machineOrders.map((m) => ({
+        order_id: m.id,
+        customer_name: m.customer_name,
+        product: `${m.quantity} ${m.product}`,
+        promised_delivery_date: m.promised_delivery_date,
+      })),
       supervisor_on_shift: shift
         ? { id: shift.id, name: shift.name, chat_handle: shift.chat_handle, shift: shift.shift, shift_ends_local: localParts(shift.ends_at, o.timezone).label }
         : null,
+      machines_at_site: machines.map((m) => ({ machine_id: m.machine_id, stage: m.stage })),
+      buyer: buyer ?? null,
       escalation_contact: manager ?? null,
     };
   },
@@ -248,13 +263,17 @@ export const rescheduleOrders: Tool<typeof rescheduleOrdersInput> = {
 const messageStaffInput = z.object({
   staff_id: z.string().describe("Staff id from get_order_context, for example 'ams-supervisor-3rd'"),
   body: z.string().min(1).max(600).describe("Short chat message, plain text"),
+  expects_reply: z
+    .boolean()
+    .describe("true when you ask something and must wait for the answer; false for a thank-you or an update that needs no answer"),
 });
 
 export const messageStaff: Tool<typeof messageStaffInput> = {
   name: "message_staff",
   description:
-    "Send a chat message to a staff member, usually the supervisor on shift, then wait. " +
-    "The run pauses after this call; the reply comes back later as the next user message, with the time it was sent. " +
+    "Send a chat message to a staff member, usually the supervisor on shift. " +
+    "With expects_reply true, the run pauses until the reply comes back as the next user message, with the time it was sent. " +
+    "With expects_reply false, the run goes on. " +
     "Write it like a quick, polite Slack message from a colleague.",
   input: messageStaffInput,
   run: async ({ staff_id, body }, ctx) => {
@@ -262,9 +281,48 @@ export const messageStaff: Tool<typeof messageStaffInput> = {
     const [person] = await sql`select name, chat_handle from staff where id = ${staff_id}`;
     if (!person) throw new Error(`Unknown staff id ${staff_id}. Use the ids returned by get_order_context.`);
     await sql`
-      insert into messages (incident_id, sender, recipient, body, sim_time)
-      values (${incidentId}, 'agent', ${staff_id}, ${body}, ${ctx.now})`;
-    return { sent_to: `${person.name} (${person.chat_handle})`, status: "waiting for reply" };
+      insert into messages (incident_id, sender, recipient, body, sim_time, created_at)
+      values (${incidentId}, 'agent', ${staff_id}, ${body}, ${ctx.now}, ${new Date()})`;
+    return { sent_to: `${person.name} (${person.chat_handle})` };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Support chat. Real life: the support team's Slack channel or inbox.
+// ---------------------------------------------------------------------------
+
+const messageSupportInput = z.object({
+  headline: z
+    .string()
+    .min(10)
+    .max(100)
+    .describe("The problem in one line, for someone who reads nothing else. Example: '2 orders will be late: a laminating machine is down'"),
+  details: z
+    .string()
+    .min(10)
+    .max(700)
+    .describe(
+      "Plain text, no markdown. One or two short sentences on what happened (cause, where, expected delay as people said it, " +
+        "no internal calculations). Then one '- ' line per order that needs a decision: customer, reference, new vs promised delivery date, " +
+        "what you propose. Orders still on time: just say how many, do not list them.",
+    ),
+});
+
+export const messageSupport: Tool<typeof messageSupportInput> = {
+  name: "message_support",
+  description:
+    "Post a message in the support team chat, right before your proposals. It is the message support reads: " +
+    "the approval buttons for your proposals are shown under it, one per order, so do not ask support to reply in text. " +
+    "The run goes on (no reply needed).",
+  input: messageSupportInput,
+  run: async ({ headline, details }, ctx) => {
+    const incidentId = requireIncident(ctx);
+    // Stored as one message: the first line is the headline.
+    const body = [headline.replaceAll("\n", " "), details].join("\n");
+    await sql`
+      insert into messages (incident_id, sender, recipient, body, sim_time, created_at)
+      values (${incidentId}, 'agent', 'support', ${body}, ${ctx.now}, ${new Date()})`;
+    return { posted: true };
   },
 };
 
@@ -272,19 +330,9 @@ export const messageStaff: Tool<typeof messageStaffInput> = {
 // Actions. Both need approval from support before they run (see lib/agent/run.ts).
 // ---------------------------------------------------------------------------
 
-const noteForSupport = z
-  .string()
-  .min(20)
-  .max(500)
-  .describe(
-    "What support reads on the approval card: what happened (as the supervisor said it), " +
-      "the impact on this order (new vs promised delivery date) and why you suggest this action.",
-  );
-
 const upgradeShippingInput = z.object({
   order_id: orderId,
   shipping_method: z.enum(SHIPPING_METHODS).describe("The shipping_method of recovery_option"),
-  note_for_support: noteForSupport,
 });
 
 // Real life: the order service and the UPS shipment API.
@@ -321,7 +369,6 @@ const messageCustomerInput = z.object({
     .min(50)
     .max(1200)
     .describe("Warm, short email: apologize, give the new delivery date from the plan, offer help. No internal details (machines, staff names). Signed 'Sticker Mule Support'."),
-  note_for_support: noteForSupport,
 });
 
 // Real life: an email sent from the support tool.
@@ -335,7 +382,7 @@ export const messageCustomer: Tool<typeof messageCustomerInput> = {
     const incidentId = requireIncident(ctx);
     const [o] = await sql`select id from orders where id = ${order_id}`;
     if (!o) throw new Error(`Unknown order ${order_id}.`);
-    await sql`insert into customer_messages (incident_id, order_id, body) values (${incidentId}, ${order_id}, ${body})`;
+    await sql`insert into customer_messages (incident_id, order_id, body, sent_at) values (${incidentId}, ${order_id}, ${body}, ${new Date()})`;
     return { order_id, sent: true };
   },
 };
@@ -343,6 +390,7 @@ export const messageCustomer: Tool<typeof messageCustomerInput> = {
 export const tools: Tool[] = [
   getOrderContext,
   messageStaff,
+  messageSupport,
   rescheduleMachine,
   rescheduleOrders,
   upgradeShipping,

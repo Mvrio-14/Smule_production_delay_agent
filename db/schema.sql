@@ -15,7 +15,7 @@ create table sites (
 create table staff (
   id          text primary key,       -- 'ams-supervisor-3rd'
   name        text not null,
-  role        text not null check (role in ('production_supervisor', 'factory_manager', 'support_agent')),
+  role        text not null check (role in ('production_supervisor', 'factory_manager', 'buyer', 'support_agent')),
   site_id     text references sites,
   chat_handle text not null,          -- '@maria.lopez' (Slack handle in real life)
   check ((role = 'support_agent') = (site_id is null))
@@ -103,7 +103,7 @@ create table approvals (
   incident_id int  not null references incidents on delete cascade,
   order_id    text not null references orders,
   tool_name   text not null check (tool_name in ('upgrade_shipping', 'message_customer')),
-  input       jsonb not null,               -- frozen tool arguments, including note_for_support
+  input       jsonb not null,               -- frozen tool arguments
   approval_id text not null unique,         -- AI SDK approval id, used to resume
   status      text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
   comment     text,                         -- support's comment, sent back to the agent

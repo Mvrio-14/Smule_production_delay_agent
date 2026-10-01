@@ -1,5 +1,6 @@
 // Step 1 checks: date rules and the demo scenario. Run: npm test
 // Resets the database before each test, so each one starts from the seed.
+import "@/tests/use-test-schema";
 import { after, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { sql } from "@/lib/db";
@@ -30,12 +31,15 @@ test("ship date rule: before 17:00 ships same day, after 17:00 or weekend ships 
 
 test("order context: where the order is and who is on shift", async () => {
   const ctx = (await callTool(getOrderContext, { order_id: "SM-10401" }, alertTime)) as {
-    production: { machine_id: string; minutes_at_stage: number; orders_on_same_machine: number };
+    production: { machine_id: string; minutes_at_stage: number };
+    orders_on_same_machine: unknown[];
     supervisor_on_shift: { id: string };
+    buyer: { id: string };
   };
   assert.equal(ctx.production.machine_id, "laminator-2");
-  assert.equal(ctx.production.minutes_at_stage, 185); // since 23:05
-  assert.equal(ctx.production.orders_on_same_machine, 8);
+  assert.equal(ctx.production.minutes_at_stage, 240); // since 22:10
+  assert.equal(ctx.orders_on_same_machine.length, 8);
+  assert.equal(ctx.buyer.id, "ams-buyer");
   assert.equal(ctx.supervisor_on_shift.id, "ams-supervisor-3rd"); // night shift started Thursday 22:00
 });
 
@@ -60,4 +64,20 @@ test("delay on some orders only: a 4h reprint on SM-10403, nothing else moves", 
   assert.equal(saved.estimated_ship_date, "2026-10-05"); // the new plan is saved
   const [other] = await sql`select estimated_ship_date from orders where id = 'SM-10401'`;
   assert.equal(other.estimated_ship_date, "2026-10-02"); // other orders keep their plan
+});
+
+test("day scenario: holographic vinyl late, the buyer expects it tomorrow 8:00", async () => {
+  const dayReply = { now: new Date("2026-10-01T11:00:00-04:00") };
+  const ctx = (await callTool(getOrderContext, { order_id: "SM-10501" }, { now: new Date("2026-10-01T10:40:00-04:00") })) as {
+    supervisor_on_shift: { id: string };
+  };
+  assert.equal(ctx.supervisor_on_shift.id, "ams-supervisor-1st"); // day shift, not Mike
+  const plan = (await callTool(
+    rescheduleOrders,
+    { order_ids: ["SM-10501", "SM-10502", "SM-10503", "SM-10504"], delay_minutes: 1260, reason: "holographic vinyl delivery late" },
+    dayReply,
+  )) as Plan;
+  assert.deepEqual(byStatus(plan, "late_recoverable"), ["SM-10501"]);
+  assert.deepEqual(byStatus(plan, "late"), ["SM-10502"]);
+  assert.deepEqual(byStatus(plan, "on_time"), ["SM-10503", "SM-10504"]);
 });

@@ -22,6 +22,9 @@ const staff = [
   { id: "gaf-supervisor-2nd", name: "Brian Holt", role: "production_supervisor", site_id: "gaffney", chat_handle: "@brian.holt" },
   { id: "gaf-supervisor-3rd", name: "Jamal Reed", role: "production_supervisor", site_id: "gaffney", chat_handle: "@jamal.reed" },
   { id: "gaf-factory-manager", name: "Steve Carter", role: "factory_manager", site_id: "gaffney", chat_handle: "@steve.carter" },
+  // Purchasing sits at the factory (Sticker Mule has a Purchasing Manager in Amsterdam, NY). Office hours.
+  { id: "ams-buyer", name: "Rachel Morgan", role: "buyer", site_id: "amsterdam", chat_handle: "@rachel.morgan" },
+  { id: "gaf-buyer", name: "Owen Brooks", role: "buyer", site_id: "gaffney", chat_handle: "@owen.brooks" },
   { id: "support-1", name: "Emma Novak", role: "support_agent", site_id: null, chat_handle: "@emma.novak" },
   { id: "support-2", name: "Ravi Patel", role: "support_agent", site_id: null, chat_handle: "@ravi.patel" },
 ];
@@ -84,13 +87,13 @@ const lam2 = { site_id: "amsterdam", stage: "laminate", machine_id: "laminator-2
 
 // The demo scenario: 8 orders on laminator-2 in Amsterdam. SM-10401 is running, the other 7 are queued.
 // remaining_minutes comes from the production plan, so it grows with the position in the queue.
-// The alert fires on Friday 2026-10-02 at 02:10: SM-10401 has been laminating since 23:05, 95 min over plan.
+// The alert fires on Friday 2026-10-02 at 02:10: SM-10401 has been laminating since 22:10, 4h for a 1h30 step.
 // With a 180 min delay from 02:25 (machine back 05:25):
 // - 6 orders still arrive on time
 // - SM-10407 ships Monday instead of Friday; by ground it arrives late, by 2nd Day Air (+$45) on time: recoverable
 // - SM-10408 already ships Next Day Air; it slips to Monday and nothing faster exists: late
 const scenarioOrders = [
-  order({ id: "SM-10401", customer_name: "Brightside Coffee", product: "Die cut stickers", quantity: 500, ...lam2, stage_started_at: `2026-10-01T23:05:00${TZ_OFFSET}`, remaining_minutes: 300, planned_ship_date: FRI }),
+  order({ id: "SM-10401", customer_name: "Brightside Coffee", product: "Die cut stickers", quantity: 500, ...lam2, stage_started_at: `2026-10-01T22:10:00${TZ_OFFSET}`, remaining_minutes: 300, planned_ship_date: FRI }),
   order({ id: "SM-10402", customer_name: "Northpeak Outfitters", product: "Kiss cut stickers", quantity: 1000, ...lam2, stage_started_at: `2026-10-01T21:40:00${TZ_OFFSET}`, remaining_minutes: 540, planned_ship_date: FRI }),
   order({ id: "SM-10403", customer_name: "Loop Records", product: "Holographic stickers", quantity: 250, ...lam2, stage_started_at: `2026-10-01T22:15:00${TZ_OFFSET}`, remaining_minutes: 650, planned_ship_date: FRI }),
   order({ id: "SM-10404", customer_name: "Fern & Co", product: "Sticker sheets", quantity: 300, ...lam2, stage_started_at: `2026-10-02T00:30:00${TZ_OFFSET}`, remaining_minutes: 900, planned_ship_date: MON }),
@@ -148,12 +151,43 @@ function fillerOrders() {
   });
 }
 
-export const allOrders = [...scenarioOrders, ...decoyOrders, ...fillerOrders()];
+// Second scenario, during the day: the holographic vinyl delivery due this morning has not arrived.
+// The alert fires on Thursday 2026-10-01 at 10:40: SM-10501 waits on printer-1 in Amsterdam since 06:40, 4h for a 1h20 step.
+// Only the holographic orders are blocked; the other orders on printer-1 run normally.
+// If the buyer says the delivery comes tomorrow at 8:00 (a 1,260 min delay from an 11:00 reply):
+// - SM-10501 ships Friday instead of Thursday; 2nd Day Air (+$45) keeps the promised date: recoverable
+// - SM-10502 already ships Next Day Air; it arrives Monday instead of Friday: late
+// - SM-10503 and SM-10504 still arrive on time
+const THU = "2026-10-01";
+const ams1 = { site_id: "amsterdam", stage: "print", machine_id: "printer-1" };
+const supplierScenarioOrders = [
+  order({ id: "SM-10501", customer_name: "Neon Arcade Bar", product: "Holographic stickers", quantity: 1000, ...ams1, stage_started_at: `2026-10-01T06:40:00${TZ_OFFSET}`, remaining_minutes: 240, planned_ship_date: THU }),
+  order({ id: "SM-10502", customer_name: "Stellar Skate Co", product: "Holographic stickers", quantity: 500, ...ams1, stage_started_at: `2026-10-01T08:25:00${TZ_OFFSET}`, remaining_minutes: 300, planned_ship_date: THU, shipping_method: "ups_next_day_air" }),
+  order({ id: "SM-10503", customer_name: "Moonlight Bakery", product: "Holographic stickers", quantity: 250, ...ams1, stage_started_at: `2026-10-01T09:00:00${TZ_OFFSET}`, remaining_minutes: 400, planned_ship_date: FRI }),
+  order({ id: "SM-10504", customer_name: "Riverside Music Fest", product: "Holographic stickers", quantity: 3000, ...ams1, stage_started_at: `2026-10-01T09:30:00${TZ_OFFSET}`, remaining_minutes: 600, planned_ship_date: MON }),
+];
+
+export const allOrders = [...scenarioOrders, ...decoyOrders, ...supplierScenarioOrders, ...fillerOrders()];
 
 export async function resetDatabase() {
+  if (process.env.DB_SCHEMA) await sql.unsafe(`create schema if not exists ${process.env.DB_SCHEMA}`);
   await sql.unsafe(readFileSync(join(process.cwd(), "db", "schema.sql"), "utf8"));
   await sql`insert into sites ${sql(sites)}`;
   await sql`insert into staff ${sql(staff)}`;
   await sql`insert into shift_assignments ${sql(shiftAssignments())}`;
   await sql`insert into orders ${sql(allOrders)}`;
+}
+
+// Puts every order back to its seed state without touching incidents (used by "Simulate alert" in the app,
+// so past incidents stay visible).
+export async function resetOrders() {
+  await sql`
+    update orders o set
+      shipping_method = v.shipping_method,
+      estimated_ship_date = v.estimated_ship_date::date,
+      estimated_delivery_date = v.estimated_delivery_date::date,
+      estimate_reason = null
+    from jsonb_to_recordset(${sql.json(allOrders as never)})
+      as v(id text, shipping_method text, estimated_ship_date text, estimated_delivery_date text)
+    where o.id = v.id`;
 }

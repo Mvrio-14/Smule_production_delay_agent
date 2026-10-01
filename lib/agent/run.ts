@@ -4,7 +4,7 @@
 // so a run can resume minutes or hours later.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { generateText, hasToolCall, stepCountIs, tool, type ModelMessage, type ToolApprovalResponse, type ToolSet } from "ai";
+import { generateText, stepCountIs, tool, type ModelMessage, type StepResult, type ToolApprovalResponse, type ToolSet } from "ai";
 import { sql } from "@/lib/db";
 import { localParts } from "@/lib/ship-dates";
 import { APPROVAL_TOOLS, tools, type ToolContext } from "@/lib/tools";
@@ -13,10 +13,13 @@ import { costUsd, getModel, modelSpec } from "@/lib/agent/model";
 const SYSTEM_PROMPT = readFileSync(join(process.cwd(), "lib", "agent", "system-prompt.md"), "utf8");
 const MAX_STEPS = 15;
 
+// Sent by the production tracking system when an order has spent far longer than planned at a stage.
 export type AlertEvent = {
   type: "order_overdue";
   order_id: string;
-  overdue_minutes: number;
+  stage: string;
+  planned_stage_minutes: number; // how long the plan gave this stage
+  overdue_minutes: number; // how far past that it is
   detected_at: string;
 };
 
@@ -55,7 +58,16 @@ async function saveConversation(incidentId: number, conversation: ModelMessage[]
 // Entry points: alert, staff reply, support decision.
 // ---------------------------------------------------------------------------
 
+// Each entry point exists in two forms: `record...` saves the human input and returns what the agent
+// needs to resume (the web app then runs the agent in the background), and a combined form used by scripts.
+
 export async function startIncident(event: AlertEvent, opts: { now?: Date; model?: string } = {}): Promise<number> {
+  const { id, now } = await createIncident(event, opts);
+  await runAgent(id, now);
+  return id;
+}
+
+export async function createIncident(event: AlertEvent, opts: { now?: Date; model?: string } = {}) {
   const spec = opts.model ?? modelSpec();
   const now = opts.now ?? new Date(event.detected_at);
   const timezone = await siteTimezone(event.order_id);
@@ -66,14 +78,18 @@ export async function startIncident(event: AlertEvent, opts: { now?: Date; model
     },
   ];
   const [{ id }] = await sql`
-    insert into incidents (trigger_event, order_id, status, model, conversation, sim_started_at)
-    values (${sql.json(event)}, ${event.order_id}, 'running', ${spec}, ${sql.json(conversation as never)}, ${event.detected_at})
+    insert into incidents (trigger_event, order_id, status, model, conversation, sim_started_at, created_at)
+    values (${sql.json(event)}, ${event.order_id}, 'running', ${spec}, ${sql.json(conversation as never)}, ${event.detected_at}, ${new Date()})
     returning id`;
-  await runAgent(id, now);
-  return id;
+  return { id: id as number, now };
 }
 
 export async function replyToIncident(incidentId: number, body: string, opts: { now?: Date } = {}) {
+  const now = await recordReply(incidentId, body, opts);
+  await runAgent(incidentId, now);
+}
+
+export async function recordReply(incidentId: number, body: string, opts: { now?: Date } = {}): Promise<Date> {
   const incident = await loadIncident(incidentId);
   if (incident.status !== "waiting_for_reply") throw new Error(`Incident ${incidentId} is not waiting for a reply (status: ${incident.status}).`);
   const now = opts.now ?? simNow(incident);
@@ -84,8 +100,8 @@ export async function replyToIncident(incidentId: number, body: string, opts: { 
     where m.incident_id = ${incidentId} and m.sender = 'agent'
     order by m.id desc limit 1`;
   await sql`
-    insert into messages (incident_id, sender, recipient, body, sim_time)
-    values (${incidentId}, ${last.recipient}, 'agent', ${body}, ${now})`;
+    insert into messages (incident_id, sender, recipient, body, sim_time, created_at)
+    values (${incidentId}, ${last.recipient}, 'agent', ${body}, ${now}, ${new Date()})`;
 
   const timezone = await siteTimezone(incident.order_id);
   const conversation: ModelMessage[] = [
@@ -93,20 +109,26 @@ export async function replyToIncident(incidentId: number, body: string, opts: { 
     { role: "user", content: `Reply from ${last.name} (${last.recipient}) at ${localParts(now, timezone).label} (local time):\n"${body}"` },
   ];
   await saveConversation(incidentId, conversation);
-  await runAgent(incidentId, now);
+  return now;
 }
 
 // Records a support decision. The agent resumes once every pending approval of the incident is decided.
 export async function decideApproval(approvalRowId: number, approved: boolean, comment?: string, opts: { now?: Date } = {}) {
+  const decision = await recordDecision(approvalRowId, approved, comment, opts);
+  if (decision.resume) await runAgent(decision.incidentId, decision.now);
+}
+
+// Returns resume: true once the last pending approval of the incident is decided.
+export async function recordDecision(approvalRowId: number, approved: boolean, comment?: string, opts: { now?: Date } = {}) {
   const [approval] = await sql`
-    update approvals set status = ${approved ? "approved" : "rejected"}, comment = ${comment ?? null}, decided_at = now()
+    update approvals set status = ${approved ? "approved" : "rejected"}, comment = ${comment ?? null}, decided_at = ${new Date()}
     where id = ${approvalRowId} and status = 'pending'
     returning incident_id`;
   if (!approval) throw new Error(`Approval ${approvalRowId} is unknown or already decided.`);
   const incidentId: number = approval.incident_id;
 
   const [{ pending }] = await sql`select count(*)::int as pending from approvals where incident_id = ${incidentId} and status = 'pending'`;
-  if (pending > 0) return;
+  if (pending > 0) return { incidentId, resume: false, now: new Date() };
 
   // Send back every decision the model has not seen yet.
   const incident = await loadIncident(incidentId);
@@ -127,12 +149,17 @@ export async function decideApproval(approvalRowId: number, approved: boolean, c
 
   const conversation: ModelMessage[] = [...incident.conversation, { role: "tool", content: responses }];
   await saveConversation(incidentId, conversation);
-  await runAgent(incidentId, opts.now ?? simNow(incident));
+  return { incidentId, resume: true, now: opts.now ?? simNow(incident) };
 }
 
 // ---------------------------------------------------------------------------
 // The model loop, with step logging.
 // ---------------------------------------------------------------------------
+
+// True when the step sent a message to staff and asked for an answer: the run must pause there.
+function asksStaff(step: StepResult<ToolSet> | undefined): boolean {
+  return !!step?.toolCalls.some((c) => c.toolName === "message_staff" && (c.input as { expects_reply?: boolean }).expects_reply);
+}
 
 async function logStep(incidentId: number, row: {
   kind: "llm" | "tool";
@@ -154,7 +181,7 @@ async function logStep(incidentId: number, row: {
             ${row.duration_ms}, ${row.tokens_in ?? null}, ${row.tokens_out ?? null}, ${row.cost_usd ?? null}, ${row.model ?? null})`;
 }
 
-async function runAgent(incidentId: number, now: Date) {
+export async function runAgent(incidentId: number, now: Date) {
   const incident = await loadIncident(incidentId);
   await sql`update incidents set status = 'running' where id = ${incidentId}`;
   const ctx: ToolContext = { now, incidentId };
@@ -173,9 +200,11 @@ async function runAgent(incidentId: number, now: Date) {
         execute: async (input: unknown) => {
           const startedAt = new Date();
           firstToolAt ??= startedAt;
+          console.log(`[incident ${incidentId}] tool ${t.name} start`);
           try {
             const output = await t.run(input, ctx);
             await logStep(incidentId, { kind: "tool", tool_name: t.name, input, output, started_at: startedAt, duration_ms: Date.now() - startedAt.getTime() });
+            console.log(`[incident ${incidentId}] tool ${t.name} done`);
             return output;
           } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
@@ -193,13 +222,18 @@ async function runAgent(incidentId: number, now: Date) {
       system: SYSTEM_PROMPT,
       messages: incident.conversation,
       tools: aiTools,
+      // OpenAI only: medium reasoning, plus a summary of it to show in the trace. The portable `reasoning`
+      // setting of the AI SDK is ignored by OpenAI when tools are present, so it is set here instead.
+      providerOptions: { openai: { reasoningEffort: "medium", reasoningSummary: "detailed" } },
       toolApproval: Object.fromEntries(APPROVAL_TOOLS.map((name) => [name, "user-approval" as const])),
-      stopWhen: [stepCountIs(MAX_STEPS), hasToolCall("message_staff")],
+      stopWhen: [stepCountIs(MAX_STEPS), ({ steps }) => asksStaff(steps.at(-1))],
       onStepStart: () => {
+        console.log(`[incident ${incidentId}] model call start`);
         stepStartedAt = new Date();
         firstToolAt = undefined;
       },
       onStepEnd: async (step) => {
+        console.log(`[incident ${incidentId}] model call done: ${step.toolCalls.map((c) => c.toolName).join(", ") || "text"}`);
         const tokensIn = step.usage.inputTokens ?? 0;
         const tokensOut = step.usage.outputTokens ?? 0;
         await logStep(incidentId, {
@@ -220,6 +254,7 @@ async function runAgent(incidentId: number, now: Date) {
       },
     });
 
+    console.log(`[incident ${incidentId}] run finished, saving status`);
     const conversation = [...incident.conversation, ...result.responseMessages];
     const approvalRequests = result.content.filter((p) => p.type === "tool-approval-request");
 
@@ -227,15 +262,15 @@ async function runAgent(incidentId: number, now: Date) {
       for (const r of approvalRequests) {
         const input = r.toolCall.input as { order_id: string };
         await sql`
-          insert into approvals (incident_id, order_id, tool_name, input, approval_id)
-          values (${incidentId}, ${input.order_id}, ${r.toolCall.toolName}, ${sql.json(input as never)}, ${r.approvalId})`;
+          insert into approvals (incident_id, order_id, tool_name, input, approval_id, created_at)
+          values (${incidentId}, ${input.order_id}, ${r.toolCall.toolName}, ${sql.json(input as never)}, ${r.approvalId}, ${new Date()})`;
       }
       await sql`update incidents set status = 'waiting_for_approval', conversation = ${sql.json(conversation as never)} where id = ${incidentId}`;
-    } else if (result.steps.at(-1)?.toolCalls.some((c) => c.toolName === "message_staff")) {
+    } else if (asksStaff(result.steps.at(-1))) {
       await sql`update incidents set status = 'waiting_for_reply', conversation = ${sql.json(conversation as never)} where id = ${incidentId}`;
     } else {
       await sql`
-        update incidents set status = 'resolved', summary = ${result.text}, resolved_at = now(), conversation = ${sql.json(conversation as never)}
+        update incidents set status = 'resolved', summary = ${result.text}, resolved_at = ${new Date()}, conversation = ${sql.json(conversation as never)}
         where id = ${incidentId}`;
     }
   } catch (e) {

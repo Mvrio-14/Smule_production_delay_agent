@@ -42,8 +42,8 @@ When the production tracking system reports that an order is behind its plan and
 
 ## The single demo scenario
 
-- Alert: order SM-10401 is 95 minutes behind its plan (Friday 2026-10-02, 02:10, night shift).
-- Context: it is laminating on `laminator-2` in Amsterdam since 23:05. 8 orders depend on that machine (SM-10401 running, 7 queued). Only SM-10401 looks late to the tracking system so far. Mike Kowalski supervises the night shift.
+- Alert: order SM-10401 has been at lamination for 4 hours instead of the 1h30 planned (Friday 2026-10-02, 02:10, night shift). Alerts only fire for large overruns (here three times the planned time), so the agent does not run for small slips the plan absorbs.
+- Context: it is laminating on `laminator-2` in Amsterdam since 22:10. 8 orders depend on that machine (SM-10401 running, 7 queued). Only SM-10401 looks late to the tracking system so far. Mike Kowalski supervises the night shift.
 - The agent asks Mike. At 02:25 he answers "roller jam, maintenance on it, back in about 3 hours".
 - The agent reschedules the whole machine (180 min). The planning system returns:
   - 6 orders still delivered on time: nobody is bothered
@@ -62,7 +62,9 @@ In the demo, a button sends it. In real life, a webhook from the tracking system
 {
   "type": "order_overdue",
   "order_id": "SM-10401",
-  "overdue_minutes": 95,
+  "stage": "laminate",
+  "planned_stage_minutes": 90,
+  "overdue_minutes": 150,
   "detected_at": "2026-10-02T02:10:00-04:00"
 }
 ```

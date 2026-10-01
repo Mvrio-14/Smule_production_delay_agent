@@ -1,6 +1,6 @@
 // Play an incident by hand, one command at a time. Each command is a separate process:
 // the agent state lives in the database, not in memory.
-//   npm run incident -- start                      new alert on SM-10401 (reset the database first with npm run db:reset)
+//   npm run incident -- start [night|day]          new alert (reset the database first with npm run db:reset)
 //   npm run incident -- reply <incident> "<text>"  answer as the supervisor
 //   npm run incident -- approve <approval>         approve a proposal
 //   npm run incident -- reject <approval> "<why>"  reject a proposal with a comment
@@ -9,6 +9,7 @@
 import { sql } from "@/lib/db";
 import { decideApproval, replyToIncident, startIncident } from "@/lib/agent/run";
 import { localParts } from "@/lib/ship-dates";
+import { SCENARIOS, type ScenarioId } from "@/lib/scenarios";
 
 const [command, id, text] = process.argv.slice(2);
 
@@ -21,14 +22,13 @@ async function show(incidentId: number) {
   const proposals = await sql`select id, order_id, tool_name, status, input from approvals where incident_id = ${incidentId} order by id`;
   for (const a of proposals) {
     console.log(`  Proposal ${a.id} [${a.status}] ${a.tool_name} for ${a.order_id}${a.input.shipping_method ? ` -> ${a.input.shipping_method}` : ""}`);
-    console.log(`    note: ${a.input.note_for_support}`);
     if (a.input.body) console.log(`    email: ${String(a.input.body).replaceAll("\n", " ")}`);
   }
   if (i.summary) console.log(`  Summary: ${i.summary}`);
 }
 
 if (command === "start") {
-  const incidentId = await startIncident({ type: "order_overdue", order_id: "SM-10401", overdue_minutes: 95, detected_at: "2026-10-02T02:10:00-04:00" });
+  const incidentId = await startIncident(SCENARIOS[(id as ScenarioId) ?? "night"]?.alert ?? SCENARIOS.night.alert);
   await show(incidentId);
 } else if (command === "reply") {
   await replyToIncident(Number(id), text);
