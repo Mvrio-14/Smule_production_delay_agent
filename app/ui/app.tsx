@@ -56,12 +56,9 @@ export function App() {
     if (selected !== null) fetchState(selected).then((s) => s && setState(s));
   }, [selected]);
 
-  // On first load, show the latest incident.
+  // On first load, list past incidents but open none: the visitor starts from the empty screen.
   useEffect(() => {
-    fetchIncidents().then((list) => {
-      setIncidents(list);
-      setSelected((current) => current ?? list[0]?.id ?? null);
-    });
+    fetchIncidents().then(setIncidents);
   }, []);
 
   // Poll the selected incident about every second, one request at a time. Stop once it is closed.
