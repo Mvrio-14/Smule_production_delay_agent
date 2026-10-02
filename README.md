@@ -2,7 +2,7 @@
 
 An AI agent that coordinates production, support and customers when an order runs late at a Sticker Mule factory. Built as a prototype for the AI Agent Engineer application.
 
-**[Live demo](https://production-delay-agent-smule.vercel.app)** · **Video (2 min):** _coming soon_
+**[Live demo](https://production-delay-agent-smule.vercel.app)** · **[Demo video (4 min)](https://www.loom.com/share/55bc30a6a2f64788826c2beb6f46cc95)**
 
 ![Agent mule](public/agent-mule.svg)
 
